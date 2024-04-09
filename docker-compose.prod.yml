@@ -1,0 +1,175 @@
+services:
+  db:
+    container_name: tucker-postgres
+    image: postgres:12.0-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_DB=${DATABASE_NAME}
+      - POSTGRES_USER=${DATABASE_USER}
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+    networks:
+      - back_network
+
+  redis:
+    container_name: tucker-redis
+    image: redis:alpine
+    networks:
+    - back_network
+
+  back:
+    image: ghcr.io/neural-dynamics-web/tucker-backend:latest
+    container_name: tucker-backend
+    working_dir: /home/django/web
+    command: gunicorn --bind 0.0.0.0:5000 -w 4 website.wsgi
+    volumes:
+      - back-media:/home/django/web/media
+      - back-static:/home/django/web/allstaticfiles
+    environment:
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - ENGINE=django.db.backends.postgresql_psycopg2
+      - DJANGO_SETTINGS_MODULE=website.settings.prod
+      - ALLOWED_HOSTS=${BACKEND_DOMAIN},www.${BACKEND_DOMAIN}
+      - FRONTEND_DOMAIN=${FRONT_DOMAIN}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - EMAIL_BACKEND=${EMAIL_BACKEND}
+      - EMAIL_HOST=${EMAIL_HOST}
+      - EMAIL_PORT=${EMAIL_PORT}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS}
+      - PAY_DOMAIN=${PAY_DOMAIN}
+      - MONTONIO_ACCESS_KEY=${MONTONIO_ACCESS_KEY}
+      - MONTONIO_SECRET=${MONTONIO_SECRET}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/admin"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      - db
+      - redis
+    networks:
+      - back_network
+      - nginx_network
+
+  nginx-proxy:
+    image: ghcr.io/neural-dynamics-web/tuker-checkout-front:latest
+    container_name: tucker-nginx
+    volumes:
+      - ./nginx/:/etc/nginx/templates:ro
+      - nginx_secrets:/etc/letsencrypt
+      - back-static:/app/allstaticfiles
+      - back-media:/app/media
+    ports:
+      - 80:80
+      - 443:443
+    environment:
+      - ENVSUBST_VARS=BACKEND_DOMAIN FRONT_DOMAIN
+      - CERTBOT_EMAIL
+      - BACKEND_DOMAIN
+      - FRONT_DOMAIN
+    networks:
+      - nginx_network
+    depends_on:
+      - back
+
+  celery:
+    image: ghcr.io/neural-dynamics-web/tucker-backend:latest
+    container_name: tucker-celery
+    working_dir: /home/django/web/
+    command: celery -A website worker -l error -c 2
+    environment:
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - ENGINE=django.db.backends.postgresql_psycopg2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - EMAIL_BACKEND=${EMAIL_BACKEND}
+      - EMAIL_HOST=${EMAIL_HOST}
+      - EMAIL_PORT=${EMAIL_PORT}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS}
+      - PAY_DOMAIN=${PAY_DOMAIN}
+    depends_on:
+      - db
+      - redis
+    networks:
+      - back_network
+
+  celery-beat:
+    image: ghcr.io/neural-dynamics-web/tucker-backend:latest
+    container_name: tucker-celery-beat
+    working_dir: /home/django/web/
+    command: celery -A website beat -l error
+    environment:
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - ENGINE=django.db.backends.postgresql_psycopg2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - EMAIL_BACKEND=${EMAIL_BACKEND}
+      - EMAIL_HOST=${EMAIL_HOST}
+      - EMAIL_PORT=${EMAIL_PORT}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS}
+      - PAY_DOMAIN=${PAY_DOMAIN}
+    depends_on:
+      - db
+      - redis
+      - celery
+    networks:
+      - back_network
+
+  celery-emails:
+    image: ghcr.io/neural-dynamics-web/tucker-backend:latest
+    working_dir: /home/django/web/   
+    container_name: tucker-celery-emails
+    command: celery -A website worker -l info -c 4 -Q emails
+    environment:
+      - DATABASE_NAME=${DATABASE_NAME}
+      - DATABASE_USER=${DATABASE_USER}
+      - DATABASE_HOST=${DATABASE_HOST}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - FRONT_DOMAIN=${FRONT_DOMAIN}
+      - DATABASE_PORT=${DATABASE_PORT}
+      - ENGINE=django.db.backends.postgresql_psycopg2
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - EMAIL_BACKEND=${EMAIL_BACKEND}
+      - EMAIL_HOST=${EMAIL_HOST}
+      - EMAIL_PORT=${EMAIL_PORT}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD}
+      - EMAIL_USE_TLS=${EMAIL_USE_TLS}
+      - PAY_DOMAIN=${PAY_DOMAIN}
+    depends_on:
+      - db
+      - redis
+    networks:
+      - back_network
+
+volumes:
+  nginx_secrets:
+  back-static:
+  back-media:
+  postgres_data:
+
+networks:
+  back_network:
+    driver: bridge
+  nginx_network:
+    driver: bridge

@@ -1,0 +1,67 @@
+FROM python:3.8.15-slim as builder
+
+WORKDIR /usr/src/app
+
+RUN apt-get update && apt-get install -y libwebp-dev g++ gcc gettext libzbar0
+RUN apt install gettext -y
+RUN apt-get update \
+    && apt-get install -y \
+        curl \
+        libxrender1 \
+        libjpeg62-turbo \
+        fontconfig \
+        libxtst6 \
+        xfonts-75dpi \
+        xfonts-base \
+        xz-utils \
+        git
+
+
+COPY ./requirements.txt .
+
+RUN pip install --upgrade pip wheel setuptools && \
+    pip wheel --no-cache-dir --no-deps --wheel-dir /usr/src/app/wheels gunicorn django-redis==5.2.0 django-cors-headers==3.7.0 && \
+    pip wheel --no-cache-dir --no-deps --wheel-dir /usr/src/app/wheels -r requirements.txt
+
+
+FROM python:3.8.15-slim
+
+LABEL org.opencontainers.image.source https://github.com/Neural-Dynamics-Web/tucker
+
+RUN addgroup --system django && adduser --system --group django
+
+RUN mkdir /home/django/web
+RUN mkdir -p /home/django/web/allstaticfiles/static
+RUN mkdir -p /home/django/web/media
+
+WORKDIR /home/django/web
+
+RUN apt-get update && apt-get install -y libwebp-dev g++ gcc gettext libzbar0
+RUN apt install gettext -y
+RUN apt-get update \
+    && apt-get install -y \
+        curl \
+        libxrender1 \
+        libjpeg62-turbo \
+        fontconfig \
+        libxtst6 \
+        xfonts-75dpi \
+        xfonts-base \
+        xz-utils
+
+COPY --from=builder /usr/src/app/wheels /wheels
+COPY --from=builder /usr/src/app/requirements.txt .
+
+RUN pip install --no-cache /wheels/*
+
+COPY ./entrypoint.prod.sh .
+RUN sed -i 's/\r$//g'  /home/django/web/entrypoint.prod.sh
+RUN chmod +x  /home/django/web/entrypoint.prod.sh
+
+COPY . /home/django/web
+
+RUN chown -R django:django /home/django/web
+
+USER django
+
+ENTRYPOINT ["/home/django/web/entrypoint.prod.sh"]
